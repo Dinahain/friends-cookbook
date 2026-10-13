@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Friends' Cookbook</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <h1>🍳 Friends' Cookbook</h1>
+      <p class="tagline">Cook it. Love it. Share it with a link.</p>
+    </div>
+    <button id="add-btn" class="btn btn-primary">+ Add a recipe</button>
+  </header>
+
+  <section class="toolbar">
+    <input id="search" type="search" placeholder="Search recipes, ingredients or friends..." aria-label="Search recipes">
+    <div id="tag-filters" class="chips"></div>
+  </section>
+
+  <main>
+    <div id="recipe-grid" class="grid"></div>
+    <p id="empty-state" class="empty" hidden>No recipes found. Try another search, or add your own! 🥄</p>
+  </main>
+
+  <footer class="site-footer">
+    Recipes are saved in your browser. Share a recipe to send it to a friend.
+  </footer>
+
+  <!-- Recipe details -->
+  <dialog id="recipe-dialog" class="dialog">
+    <button class="close-btn" data-close aria-label="Close">✕</button>
+    <div id="recipe-detail"></div>
+  </dialog>
+
+  <!-- Add recipe form -->
+  <dialog id="form-dialog" class="dialog">
+    <button class="close-btn" data-close aria-label="Close">✕</button>
+    <h2>Add a new recipe</h2>
+    <form id="recipe-form">
+      <div class="form-row">
+        <label>Recipe name
+          <input name="title" required maxlength="80" placeholder="Grandma's apple pie">
+        </label>
+        <label class="small">Icon
+          <select name="emoji">
+            <option>🍝</option><option>🍕</option><option>🥗</option><option>🍲</option>
+            <option>🍰</option><option>🍪</option><option>🥞</option><option>🍳</option>
+            <option>🍔</option><option>🌮</option><option>🍜</option><option>🥘</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Your name
+          <input name="author" required maxlength="40" placeholder="Dina">
+        </label>
+        <label class="small">Minutes
+          <input name="time" type="number" min="1" max="999" value="30" required>
+        </label>
+        <label class="small">Servings
+          <input name="servings" type="number" min="1" max="99" value="4" required>
+        </label>
+      </div>
+      <label>Tags <span class="hint">(separate with commas)</span>
+        <input name="tags" maxlength="100" placeholder="Dessert, Vegetarian">
+      </label>
+      <label>Ingredients <span class="hint">(one per line)</span>
+        <textarea name="ingredients" rows="5" required placeholder="2 cups flour&#10;1 cup sugar&#10;3 eggs"></textarea>
+      </label>
+      <label>Steps <span class="hint">(one per line)</span>
+        <textarea name="steps" rows="5" required placeholder="Preheat the oven to 180°C&#10;Mix everything together&#10;Bake for 40 minutes"></textarea>
+      </label>
+      <button type="submit" class="btn btn-primary btn-wide">Save recipe</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
