@@ -9,37 +9,85 @@
 <body>
   <header class="site-header">
     <div>
-      <h1>🍳 Friends' Cookbook</h1>
-      <p class="tagline">Cook it. Love it. Share it with a link.</p>
+      <h1><button id="home-link" class="home-link">🍳 Friends' Cookbook</button></h1>
+      <p class="tagline">Cookbooks for every group of friends. Share them with a link.</p>
     </div>
-    <button id="add-btn" class="btn btn-primary">+ Add a recipe</button>
+    <div class="header-actions">
+      <button id="profile-btn" class="btn btn-light">👋 Hi!</button>
+      <button id="settings-btn" class="btn btn-light" aria-label="AI settings">⚙️</button>
+    </div>
   </header>
 
-  <section class="toolbar">
-    <input id="search" type="search" placeholder="Search recipes, ingredients or friends..." aria-label="Search recipes">
-    <div id="tag-filters" class="chips"></div>
+  <!-- Home: list of cookbooks -->
+  <section id="home-view" class="view">
+    <h2>Your cookbooks</h2>
+    <div id="cookbook-grid" class="grid"></div>
   </section>
 
-  <main>
+  <!-- One cookbook -->
+  <section id="cookbook-view" class="view" hidden>
+    <button class="back-btn" data-go-home>← All cookbooks</button>
+    <div class="view-header">
+      <div>
+        <h2 id="cookbook-title"></h2>
+        <p id="cookbook-members" class="meta"></p>
+      </div>
+      <div class="view-actions">
+        <button id="add-btn" class="btn btn-primary">+ Add a recipe</button>
+        <button id="invite-btn" class="btn">👥 Invite friends</button>
+        <button id="delete-cookbook-btn" class="btn btn-danger">🗑</button>
+      </div>
+    </div>
+    <div id="invite-box" class="share-box" hidden>
+      <p>Send this link to your friends. They'll get a copy of this cookbook with all its recipes (without photos).</p>
+      <div class="share-row">
+        <input class="share-link" readonly>
+        <button class="btn" data-copy>📋 Copy</button>
+        <a class="btn btn-whatsapp" target="_blank" rel="noopener">WhatsApp</a>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search recipes, ingredients or friends..." aria-label="Search recipes">
+      <div id="tag-filters" class="chips"></div>
+    </div>
     <div id="recipe-grid" class="grid"></div>
-    <p id="empty-state" class="empty" hidden>No recipes found. Try another search, or add your own! 🥄</p>
-  </main>
+    <p id="empty-state" class="empty" hidden>No recipes here yet. Add one, or try another search! 🥄</p>
+  </section>
+
+  <!-- AI Chef -->
+  <section id="ai-view" class="view" hidden>
+    <button class="back-btn" data-go-home>← All cookbooks</button>
+    <h2>🤖 AI Chef</h2>
+    <p class="meta">Tell the AI Chef what's in your kitchen. Type your ingredients, upload a photo of them, or both.</p>
+    <form id="ai-form" class="ai-form">
+      <label>Ingredients you have
+        <textarea name="ingredients" rows="3" placeholder="eggs, tomatoes, cheese, spinach"></textarea>
+      </label>
+      <label>Photo of your ingredients <span class="hint">(optional)</span>
+        <input name="photo" type="file" accept="image/*">
+      </label>
+      <img id="ai-photo-preview" class="photo-preview" alt="Ingredients photo preview" hidden>
+      <button type="submit" class="btn btn-primary btn-wide">✨ Find me recipes</button>
+    </form>
+    <p id="ai-status" class="ai-status" hidden></p>
+    <div id="ai-results"></div>
+  </section>
 
   <footer class="site-footer">
-    Recipes are saved in your browser. Share a recipe to send it to a friend.
+    Everything is saved in your browser. Use share and invite links to send recipes to friends.
   </footer>
 
-  <!-- Recipe details -->
-  <dialog id="recipe-dialog" class="dialog">
+  <!-- Details popup (recipes, shared cookbooks) -->
+  <dialog id="detail-dialog" class="dialog">
     <button class="close-btn" data-close aria-label="Close">✕</button>
-    <div id="recipe-detail"></div>
+    <div id="detail"></div>
   </dialog>
 
   <!-- Add recipe form -->
   <dialog id="form-dialog" class="dialog">
     <button class="close-btn" data-close aria-label="Close">✕</button>
     <h2>Add a new recipe</h2>
-    <form id="recipe-form">
+    <form id="recipe-form" class="stack-form">
       <div class="form-row">
         <label>Recipe name
           <input name="title" required maxlength="80" placeholder="Grandma's apple pie">
@@ -80,7 +128,54 @@
     </form>
   </dialog>
 
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <!-- New cookbook form -->
+  <dialog id="cookbook-dialog" class="dialog dialog-small">
+    <button class="close-btn" data-close aria-label="Close">✕</button>
+    <h2>New cookbook</h2>
+    <form id="cookbook-form" class="stack-form">
+      <div class="form-row">
+        <label>Name
+          <input name="name" required maxlength="40" placeholder="Roommates">
+        </label>
+        <label class="small">Icon
+          <select name="emoji">
+            <option>📒</option><option>👨‍👩‍👧</option><option>🎓</option><option>🏠</option>
+            <option>🎉</option><option>💪</option><option>🌱</option><option>❤️</option>
+          </select>
+        </label>
+      </div>
+      <button type="submit" class="btn btn-primary btn-wide">Create cookbook</button>
+    </form>
+  </dialog>
+
+  <!-- Your name -->
+  <dialog id="profile-dialog" class="dialog dialog-small">
+    <button class="close-btn" data-close aria-label="Close">✕</button>
+    <h2>Welcome! 👋</h2>
+    <p class="meta">What's your name? It's shown on the recipes you add.</p>
+    <form id="profile-form" class="stack-form">
+      <input name="name" required maxlength="40" placeholder="Your name">
+      <button type="submit" class="btn btn-primary btn-wide">Save</button>
+    </form>
+  </dialog>
+
+  <!-- AI settings -->
+  <dialog id="settings-dialog" class="dialog dialog-small">
+    <button class="close-btn" data-close aria-label="Close">✕</button>
+    <h2>⚙️ AI Chef settings</h2>
+    <p class="meta">
+      The AI Chef uses Claude. Paste your Claude API key from
+      <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">platform.claude.com</a>.
+      The key is saved only in this browser and sent only to Claude. It is never uploaded to GitHub.
+    </p>
+    <form id="settings-form" class="stack-form">
+      <input name="apiKey" type="password" autocomplete="off" placeholder="sk-ant-...">
+      <button type="submit" class="btn btn-primary btn-wide">Save key</button>
+      <button type="button" id="remove-key-btn" class="btn btn-wide">Remove key</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" popover="manual"></div>
 
   <script src="data.js"></script>
   <script src="app.js"></script>

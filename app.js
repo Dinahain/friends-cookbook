@@ -1,51 +1,72 @@
 // Friends' Cookbook – runs entirely in the browser.
-// Recipes and favorites are stored in localStorage.
-// Sharing works by packing the whole recipe into the link (#recipe=...).
+// Cookbooks, favorites and your name are stored in localStorage.
+// Sharing works by packing recipes into the link (#recipe=... or #cookbook=...).
 
-const STORAGE_KEY = 'friendsCookbook.recipes';
+const STORAGE_KEY = 'friendsCookbook.cookbooks';
+const OLD_RECIPES_KEY = 'friendsCookbook.recipes';
 const FAVORITES_KEY = 'friendsCookbook.favorites';
+const PROFILE_KEY = 'friendsCookbook.profileName';
+const API_KEY_KEY = 'friendsCookbook.claudeApiKey';
+
 const CARD_COLORS = ['#ffe5d9', '#fff1c1', '#dff3e3', '#e0ecff', '#f3e1ff', '#ffdfe8'];
 const PHOTO_PATTERN = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 const MAX_PHOTO_LENGTH = 400000;
-// Links longer than this may not fit in a chat message, so the photo is left out.
+// Links longer than this may not fit in a chat message, so photos are left out.
 const MAX_LINK_LENGTH = 30000;
+const NEW_COOKBOOK = '__new__';
 
-let recipes = loadRecipes();
+let cookbooks = loadCookbooks();
 let favorites = new Set(JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]'));
+let profileName = localStorage.getItem(PROFILE_KEY) || '';
+let currentCookbookId = null;
 let activeTag = 'All';
 let searchText = '';
-let currentRecipe = null;
-let currentIsShared = false;
 let pendingPhoto = '';
+let aiPhoto = '';
+let aiSuggestions = [];
+// What the detail popup is showing: { type: 'recipe', recipe, mode, sourceName } or { type: 'cookbook', cookbook }
+let detailState = null;
 
-const grid = document.getElementById('recipe-grid');
-const emptyState = document.getElementById('empty-state');
-const tagFilters = document.getElementById('tag-filters');
-const searchInput = document.getElementById('search');
-const recipeDialog = document.getElementById('recipe-dialog');
-const recipeDetail = document.getElementById('recipe-detail');
-const formDialog = document.getElementById('form-dialog');
-const recipeForm = document.getElementById('recipe-form');
-const photoInput = recipeForm.elements.photo;
-const photoPreview = document.getElementById('photo-preview');
-const toast = document.getElementById('toast');
+const $ = id => document.getElementById(id);
+const views = { home: $('home-view'), cookbook: $('cookbook-view'), ai: $('ai-view') };
+const cookbookGrid = $('cookbook-grid');
+const recipeGrid = $('recipe-grid');
+const emptyState = $('empty-state');
+const tagFilters = $('tag-filters');
+const searchInput = $('search');
+const inviteBox = $('invite-box');
+const detailDialog = $('detail-dialog');
+const detail = $('detail');
+const formDialog = $('form-dialog');
+const recipeForm = $('recipe-form');
+const photoPreview = $('photo-preview');
+const aiForm = $('ai-form');
+const aiPhotoPreview = $('ai-photo-preview');
+const aiStatus = $('ai-status');
+const aiResults = $('ai-results');
+const toast = $('toast');
 
 // ---------- Storage ----------
 
-function loadRecipes() {
+function loadCookbooks() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (Array.isArray(saved)) return saved.map(normalizeRecipe);
+    if (Array.isArray(saved)) return saved.map(normalizeCookbook);
+    // Move recipes from the older one-cookbook version of the site.
+    const oldRecipes = JSON.parse(localStorage.getItem(OLD_RECIPES_KEY));
+    if (Array.isArray(oldRecipes)) {
+      return [normalizeCookbook({ name: 'My Friends', emoji: '📒', recipes: oldRecipes })];
+    }
   } catch (e) {
-    // Broken data in storage – fall back to the starter recipes.
+    // Broken data in storage – fall back to the starter cookbooks.
   }
-  return STARTER_RECIPES.map(normalizeRecipe);
+  return STARTER_COOKBOOKS.map(normalizeCookbook);
 }
 
 // Returns false when the browser storage is full (usually because of too many photos).
-function saveRecipes() {
+function saveCookbooks() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(recipes));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cookbooks));
     return true;
   } catch (e) {
     return false;
@@ -62,15 +83,19 @@ function newId() {
   return 'r-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-// Make sure a recipe (especially one from a shared link) has the right shape.
+function text(value, max) {
+  return String(value ?? '').trim().slice(0, max);
+}
+
+function textList(value, max) {
+  return (Array.isArray(value) ? value : []).map(item => text(item, max)).filter(Boolean).slice(0, 50);
+}
+
+// Make sure a recipe (especially one from a link or the AI) has the right shape.
 function normalizeRecipe(raw) {
   raw = raw || {};
-  const text = (value, max) => String(value ?? '').trim().slice(0, max);
-  const list = (value, max) =>
-    (Array.isArray(value) ? value : []).map(item => text(item, max)).filter(Boolean).slice(0, 50);
   const photo = typeof raw.photo === 'string' && raw.photo.length <= MAX_PHOTO_LENGTH &&
     PHOTO_PATTERN.test(raw.photo) ? raw.photo : '';
-
   return {
     id: text(raw.id, 50) || newId(),
     title: text(raw.title, 80) || 'Untitled recipe',
@@ -78,11 +103,73 @@ function normalizeRecipe(raw) {
     emoji: text(raw.emoji, 8) || '🍽️',
     time: Math.max(0, parseInt(raw.time, 10) || 0),
     servings: Math.max(1, parseInt(raw.servings, 10) || 1),
-    tags: list(raw.tags, 20).slice(0, 5),
-    ingredients: list(raw.ingredients, 200),
-    steps: list(raw.steps, 500),
+    tags: textList(raw.tags, 20).slice(0, 5),
+    ingredients: textList(raw.ingredients, 200),
+    steps: textList(raw.steps, 500),
     photo
   };
+}
+
+function normalizeCookbook(raw) {
+  raw = raw || {};
+  return {
+    id: text(raw.id, 50) || newId(),
+    name: text(raw.name, 40) || 'Cookbook',
+    emoji: text(raw.emoji, 12) || '📒',
+    recipes: (Array.isArray(raw.recipes) ? raw.recipes : []).slice(0, 200).map(normalizeRecipe)
+  };
+}
+
+// Escape text before putting it into HTML (protects against malicious links and AI output).
+function esc(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function colorFor(id) {
+  let sum = 0;
+  for (const ch of id) sum += ch.charCodeAt(0);
+  return CARD_COLORS[sum % CARD_COLORS.length];
+}
+
+function showToast(message) {
+  toast.textContent = message;
+  // Re-open the popover so the message shows above any open dialog.
+  if (toast.showPopover) {
+    if (toast.matches(':popover-open')) toast.hidePopover();
+    toast.showPopover();
+  }
+  requestAnimationFrame(() => toast.classList.add('show'));
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+function currentCookbook() {
+  return cookbooks.find(c => c.id === currentCookbookId);
+}
+
+function findRecipe(id) {
+  for (const cookbook of cookbooks) {
+    const recipe = cookbook.recipes.find(r => r.id === id);
+    if (recipe) return { cookbook, recipe };
+  }
+  return null;
+}
+
+function sameRecipe(a, b) {
+  return a.title === b.title && a.author === b.author;
+}
+
+function authorsOf(cookbook) {
+  return [...new Set(cookbook.recipes.map(r => r.author))];
+}
+
+function linesOf(value) {
+  return value.split('\n').map(l => l.trim()).filter(Boolean);
 }
 
 // Shrink a photo so it fits in browser storage (and in share links).
@@ -102,92 +189,181 @@ function resizeImage(src, maxSize, quality) {
   });
 }
 
+async function readPhotoFile(file, maxSize, quality) {
+  const url = URL.createObjectURL(file);
+  try {
+    return await resizeImage(url, maxSize, quality);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 function recipeImage(recipe, className) {
   return recipe.photo
     ? `<img class="${className}" src="${esc(recipe.photo)}" alt="${esc(recipe.title)}">`
     : `<div class="${className} emoji-image" style="background:${colorFor(recipe.id)}">${esc(recipe.emoji)}</div>`;
 }
 
-// Escape text before putting it into HTML (protects against malicious shared links).
-function esc(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+function recipeCard(recipe, extraAttributes) {
+  return `
+    <article class="card" ${extraAttributes} tabindex="0">
+      ${recipeImage(recipe, 'card-image')}
+      ${recipe.id.startsWith('ai-') ? '' : `<button class="fav-btn ${favorites.has(recipe.id) ? 'on' : ''}"
+        data-fav="${esc(recipe.id)}" aria-label="Toggle favorite">${favorites.has(recipe.id) ? '★' : '☆'}</button>`}
+      <div class="card-body">
+        <h3>${esc(recipe.title)}</h3>
+        <p class="meta">by ${esc(recipe.author)} · ⏱ ${recipe.time} min</p>
+        <div class="tags">${recipe.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+      </div>
+    </article>`;
 }
 
-function colorFor(id) {
-  let sum = 0;
-  for (const ch of id) sum += ch.charCodeAt(0);
-  return CARD_COLORS[sum % CARD_COLORS.length];
+function copyLink(link) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(link).then(
+      () => showToast('Link copied! Paste it to a friend 📨'),
+      () => showToast('Copy the link from the box')
+    );
+  } else {
+    showToast('Copy the link from the box');
+  }
 }
 
-function showToast(message) {
-  toast.textContent = message;
-  toast.classList.add('show');
-  clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => toast.classList.remove('show'), 2500);
+function fillShareBox(box, link, message) {
+  box.hidden = false;
+  box.querySelector('.share-link').value = link;
+  box.querySelector('.btn-whatsapp').href = 'https://wa.me/?text=' + encodeURIComponent(`${message} ${link}`);
+  copyLink(link);
 }
 
 // ---------- Share links ----------
 
-function encodeRecipe(recipe) {
-  const { id, ...data } = recipe;
+function encodeData(data) {
   const bytes = new TextEncoder().encode(JSON.stringify(data));
   let binary = '';
   bytes.forEach(b => (binary += String.fromCharCode(b)));
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function decodeRecipe(code) {
+function decodeData(code) {
   let base64 = code.replace(/-/g, '+').replace(/_/g, '/');
   while (base64.length % 4) base64 += '=';
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
-// Share links include a small version of the photo, as long as the link stays short enough.
-async function shareLinkFor(recipe) {
-  const base = location.href.split('#')[0] + '#recipe=';
+function baseUrl() {
+  return location.href.split('#')[0];
+}
+
+// Recipe links include a small version of the photo, as long as the link stays short enough.
+async function recipeLinkFor(recipe, cookbookName) {
+  const { id, ...data } = recipe;
+  const base = baseUrl() + '#recipe=';
   if (recipe.photo) {
     try {
       const smallPhoto = await resizeImage(recipe.photo, 320, 0.5);
-      const link = base + encodeRecipe({ ...recipe, photo: smallPhoto });
+      const link = base + encodeData({ ...data, photo: smallPhoto, cookbook: cookbookName });
       if (link.length <= MAX_LINK_LENGTH) return link;
     } catch (e) {
       // Fall through and share without the photo.
     }
   }
-  return base + encodeRecipe({ ...recipe, photo: '' });
+  return base + encodeData({ ...data, photo: '', cookbook: cookbookName });
 }
 
-function checkForSharedRecipe() {
-  if (!location.hash.startsWith('#recipe=')) return;
+// Cookbook links leave photos out so the whole cookbook fits in one link.
+function cookbookLinkFor(cookbook) {
+  const recipes = cookbook.recipes.map(({ id, photo, ...rest }) => rest);
+  return baseUrl() + '#cookbook=' + encodeData({ name: cookbook.name, emoji: cookbook.emoji, recipes });
+}
+
+function clearHash() {
+  history.replaceState(null, '', location.pathname + location.search);
+}
+
+function checkForSharedLink() {
+  const hash = location.hash;
   try {
-    const shared = normalizeRecipe(decodeRecipe(location.hash.slice('#recipe='.length)));
-    openRecipe(shared, true);
+    if (hash.startsWith('#recipe=')) {
+      const data = decodeData(hash.slice('#recipe='.length));
+      openRecipe(normalizeRecipe({ ...data, id: newId() }), 'shared', text(data.cookbook, 40));
+    } else if (hash.startsWith('#cookbook=')) {
+      openSharedCookbook(normalizeCookbook(decodeData(hash.slice('#cookbook='.length))));
+    }
   } catch (e) {
-    showToast('Sorry, this share link is broken 😕');
-    history.replaceState(null, '', location.pathname + location.search);
+    showToast('Sorry, this link is broken 😕');
+    clearHash();
   }
 }
 
-// ---------- Rendering ----------
+// ---------- Navigation ----------
 
-function allTags() {
-  const tags = new Set();
-  recipes.forEach(r => r.tags.forEach(t => tags.add(t)));
-  return ['All', ...[...tags].sort(), '★ Favorites'];
+function showView(name) {
+  Object.entries(views).forEach(([key, el]) => (el.hidden = key !== name));
+  window.scrollTo(0, 0);
 }
 
-function renderFilters() {
-  const tags = allTags();
-  if (!tags.includes(activeTag)) activeTag = 'All';
-  tagFilters.innerHTML = tags
-    .map(tag => `<button class="chip ${tag === activeTag ? 'active' : ''}" data-tag="${esc(tag)}">${esc(tag)}</button>`)
-    .join('');
+function goHome() {
+  currentCookbookId = null;
+  renderHome();
+  showView('home');
+}
+
+function openCookbook(id) {
+  currentCookbookId = id;
+  activeTag = 'All';
+  searchText = '';
+  searchInput.value = '';
+  inviteBox.hidden = true;
+  renderCookbook();
+  showView('cookbook');
+}
+
+function openAiChef() {
+  renderAiSettingsHint();
+  showView('ai');
+}
+
+// ---------- Rendering: home ----------
+
+function renderHome() {
+  const cards = cookbooks.map(c => {
+    const authors = authorsOf(c);
+    const people = authors.length ? authors.slice(0, 4).join(', ') + (authors.length > 4 ? '…' : '') : 'No recipes yet';
+    return `
+      <article class="card cookbook-card" data-cookbook="${esc(c.id)}" tabindex="0">
+        <div class="card-image emoji-image" style="background:${colorFor(c.id)}">${esc(c.emoji)}</div>
+        <div class="card-body">
+          <h3>${esc(c.name)}</h3>
+          <p class="meta">${c.recipes.length} recipe${c.recipes.length === 1 ? '' : 's'}</p>
+          <p class="meta small">👥 ${esc(people)}</p>
+        </div>
+      </article>`;
+  });
+  cards.push(`
+    <article class="card special-card ai-card" data-open="ai" tabindex="0">
+      <div class="card-image emoji-image">🤖</div>
+      <div class="card-body"><h3>AI Chef</h3><p class="meta">Get recipes from the ingredients you have</p></div>
+    </article>`);
+  cards.push(`
+    <article class="card special-card new-card" data-open="new-cookbook" tabindex="0">
+      <div class="card-image emoji-image">＋</div>
+      <div class="card-body"><h3>New cookbook</h3><p class="meta">Start one for another group of friends</p></div>
+    </article>`);
+  cookbookGrid.innerHTML = cards.join('');
+}
+
+function renderProfile() {
+  $('profile-btn').textContent = profileName ? `👋 Hi, ${profileName}` : '👋 Set your name';
+}
+
+// ---------- Rendering: one cookbook ----------
+
+function allTags(cookbook) {
+  const tags = new Set();
+  cookbook.recipes.forEach(r => r.tags.forEach(t => tags.add(t)));
+  return ['All', ...[...tags].sort(), '★ Favorites'];
 }
 
 function matches(recipe) {
@@ -198,42 +374,61 @@ function matches(recipe) {
   return haystack.includes(searchText);
 }
 
-function renderGrid() {
-  const visible = recipes.filter(matches);
-  emptyState.hidden = visible.length > 0;
-  grid.innerHTML = visible
-    .map(r => `
-      <article class="card" data-id="${esc(r.id)}" tabindex="0">
-        ${recipeImage(r, 'card-image')}
-        <button class="fav-btn ${favorites.has(r.id) ? 'on' : ''}" data-fav="${esc(r.id)}"
-          aria-label="Toggle favorite">${favorites.has(r.id) ? '★' : '☆'}</button>
-        <div class="card-body">
-          <h3>${esc(r.title)}</h3>
-          <p class="meta">by ${esc(r.author)} · ⏱ ${r.time} min</p>
-          <div class="tags">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
-        </div>
-      </article>`)
+function renderCookbook() {
+  const cookbook = currentCookbook();
+  if (!cookbook) return goHome();
+  $('cookbook-title').textContent = `${cookbook.emoji} ${cookbook.name}`;
+  const authors = authorsOf(cookbook);
+  $('cookbook-members').textContent = authors.length ? `👥 Recipes from ${authors.join(', ')}` : '👥 No recipes yet';
+
+  const tags = allTags(cookbook);
+  if (!tags.includes(activeTag)) activeTag = 'All';
+  tagFilters.innerHTML = tags
+    .map(tag => `<button class="chip ${tag === activeTag ? 'active' : ''}" data-tag="${esc(tag)}">${esc(tag)}</button>`)
     .join('');
+
+  renderRecipeGrid();
 }
 
-function render() {
-  renderFilters();
-  renderGrid();
+function renderRecipeGrid() {
+  const visible = currentCookbook().recipes.filter(matches);
+  emptyState.hidden = visible.length > 0;
+  recipeGrid.innerHTML = visible.map(r => recipeCard(r, `data-id="${esc(r.id)}"`)).join('');
 }
 
-function openRecipe(recipe, isShared = false) {
-  currentRecipe = recipe;
-  currentIsShared = isShared;
+// ---------- Detail popup ----------
+
+function cookbookPicker(suggestedName) {
+  const match = cookbooks.find(c => c.name.toLowerCase() === (suggestedName || '').toLowerCase());
+  const options = cookbooks.map(c =>
+    `<option value="${esc(c.id)}" ${match && match.id === c.id ? 'selected' : ''}>${esc(c.emoji)} ${esc(c.name)}</option>`);
+  if (suggestedName && !match) {
+    options.unshift(`<option value="${NEW_COOKBOOK}" selected>＋ New cookbook: ${esc(suggestedName)}</option>`);
+  } else if (!cookbooks.length) {
+    options.push(`<option value="${NEW_COOKBOOK}">＋ New cookbook: My Recipes</option>`);
+  }
+  return `<select class="cookbook-select" aria-label="Choose a cookbook">${options.join('')}</select>`;
+}
+
+// mode: 'own' (in one of your cookbooks), 'shared' (from a friend's link) or 'ai' (an AI Chef idea)
+function openRecipe(recipe, mode = 'own', sourceName = '') {
+  detailState = { type: 'recipe', recipe, mode, sourceName };
   const isFav = favorites.has(recipe.id);
 
-  const actions = isShared
-    ? `<button class="btn btn-primary" data-action="save">💾 Save to my cookbook</button>`
-    : `<button class="btn btn-primary" data-action="share">🔗 Share with a friend</button>
-       <button class="btn" data-action="fav">${isFav ? '★ Favorite' : '☆ Add to favorites'}</button>
-       <button class="btn btn-danger" data-action="delete">🗑 Delete</button>`;
+  let banner = '';
+  if (mode === 'shared') {
+    banner = `<div class="shared-note">🎁 A friend shared this recipe with you${sourceName ? ` from “${esc(sourceName)}”` : ''}!</div>`;
+  }
 
-  recipeDetail.innerHTML = `
-    ${isShared ? '<div class="shared-note">🎁 A friend shared this recipe with you!</div>' : ''}
+  const actions = mode === 'own'
+    ? `<button class="btn btn-primary" data-action="share">🔗 Share with a friend</button>
+       <button class="btn" data-action="fav">${isFav ? '★ Favorite' : '☆ Add to favorites'}</button>
+       <button class="btn btn-danger" data-action="delete">🗑 Delete</button>`
+    : `<span class="save-label">Save to</span> ${cookbookPicker(sourceName)}
+       <button class="btn btn-primary" data-action="save">💾 Save</button>`;
+
+  detail.innerHTML = `
+    ${banner}
     ${recipeImage(recipe, 'detail-image')}
     <h2>${esc(recipe.title)}</h2>
     <p class="meta">by ${esc(recipe.author)} · ⏱ ${recipe.time} min · 🍽 ${recipe.servings} servings</p>
@@ -255,12 +450,29 @@ function openRecipe(recipe, isShared = false) {
       <p>Send this link to a friend. The whole recipe is inside it!</p>
       <div class="share-row">
         <input class="share-link" readonly>
-        <button class="btn" data-action="copy">📋 Copy</button>
+        <button class="btn" data-copy>📋 Copy</button>
         <a class="btn btn-whatsapp" target="_blank" rel="noopener">WhatsApp</a>
       </div>
     </div>`;
 
-  if (!recipeDialog.open) recipeDialog.showModal();
+  if (!detailDialog.open) detailDialog.showModal();
+}
+
+function openSharedCookbook(cookbook) {
+  detailState = { type: 'cookbook', cookbook };
+  const authors = authorsOf(cookbook);
+  detail.innerHTML = `
+    <div class="shared-note">🎉 You're invited to a cookbook!</div>
+    <div class="detail-image emoji-image" style="background:${colorFor(cookbook.name)}">${esc(cookbook.emoji)}</div>
+    <h2>${esc(cookbook.name)}</h2>
+    <p class="meta">${cookbook.recipes.length} recipes${authors.length ? ` from ${esc(authors.join(', '))}` : ''}</p>
+    <ul class="invite-list">
+      ${cookbook.recipes.map(r => `<li>${esc(r.emoji)} ${esc(r.title)} <span class="meta">by ${esc(r.author)}</span></li>`).join('')}
+    </ul>
+    <div class="detail-actions">
+      <button class="btn btn-primary" data-action="join">📥 Add to my cookbooks</button>
+    </div>`;
+  if (!detailDialog.open) detailDialog.showModal();
 }
 
 // ---------- Actions ----------
@@ -269,87 +481,324 @@ function toggleFavorite(id) {
   if (favorites.has(id)) favorites.delete(id);
   else favorites.add(id);
   saveFavorites();
-  renderGrid();
+  if (currentCookbook()) renderRecipeGrid();
 }
 
-async function showShareBox() {
-  const link = await shareLinkFor(currentRecipe);
-  const box = recipeDetail.querySelector('.share-box');
-  box.hidden = false;
-  box.querySelector('.share-link').value = link;
-  box.querySelector('.btn-whatsapp').href =
-    'https://wa.me/?text=' + encodeURIComponent(`Try my recipe "${currentRecipe.title}" 😋 ${link}`);
-  copyLink(link);
+function createCookbook(name, emoji) {
+  const cookbook = normalizeCookbook({ name, emoji, recipes: [] });
+  cookbooks.push(cookbook);
+  return cookbook;
 }
 
-function copyLink(link) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(link).then(
-      () => showToast('Link copied! Paste it to a friend 📨'),
-      () => showToast('Copy the link from the box below')
-    );
-  } else {
-    showToast('Copy the link from the box below');
+// Save a shared or AI recipe into the cookbook picked in the popup.
+function saveRecipeFromDetail() {
+  const { recipe, sourceName } = detailState;
+  const choice = detail.querySelector('.cookbook-select').value;
+  let cookbook = cookbooks.find(c => c.id === choice);
+  let created = false;
+  if (!cookbook) {
+    cookbook = createCookbook(sourceName || 'My Recipes', '📒');
+    created = true;
   }
+  if (cookbook.recipes.some(r => sameRecipe(r, recipe))) {
+    showToast(`This recipe is already in “${cookbook.name}”`);
+    return;
+  }
+  cookbook.recipes.unshift({ ...recipe, id: newId() });
+  if (!saveCookbooks()) {
+    cookbook.recipes.shift();
+    if (created) cookbooks.pop();
+    showToast('Your storage is full. Delete some recipes with photos first.');
+    return;
+  }
+  detailDialog.close();
+  showToast(`Saved to “${cookbook.name}”! 🎉`);
+  openCookbook(cookbook.id);
 }
 
-function saveSharedRecipe() {
-  const exists = recipes.some(r => r.title === currentRecipe.title && r.author === currentRecipe.author);
-  if (exists) {
-    showToast('This recipe is already in your cookbook');
-  } else {
-    const saved = { ...currentRecipe, id: newId() };
-    recipes.unshift(saved);
-    if (saveRecipes()) {
-      render();
-      showToast(`"${saved.title}" was added to your cookbook! 🎉`);
-    } else {
-      recipes.shift();
-      showToast('Your cookbook is full. Delete some recipes with photos first.');
+// Add a shared cookbook. If you already have one with the same name, only new recipes are added.
+function joinSharedCookbook() {
+  const shared = detailState.cookbook;
+  let cookbook = cookbooks.find(c => c.name.toLowerCase() === shared.name.toLowerCase());
+  let added = 0;
+  if (!cookbook) {
+    cookbook = createCookbook(shared.name, shared.emoji);
+  }
+  shared.recipes.forEach(recipe => {
+    if (!cookbook.recipes.some(r => sameRecipe(r, recipe))) {
+      cookbook.recipes.push({ ...recipe, id: newId() });
+      added++;
     }
-  }
-  recipeDialog.close();
+  });
+  saveCookbooks();
+  detailDialog.close();
+  showToast(added ? `Added ${added} recipe${added === 1 ? '' : 's'} to “${cookbook.name}” 🎉` : `You already have all of these recipes`);
+  openCookbook(cookbook.id);
 }
 
 function deleteCurrentRecipe() {
-  if (!confirm(`Delete "${currentRecipe.title}"?`)) return;
-  recipes = recipes.filter(r => r.id !== currentRecipe.id);
-  favorites.delete(currentRecipe.id);
-  saveRecipes();
+  const found = findRecipe(detailState.recipe.id);
+  if (!found || !confirm(`Delete "${found.recipe.title}"?`)) return;
+  found.cookbook.recipes = found.cookbook.recipes.filter(r => r.id !== found.recipe.id);
+  favorites.delete(found.recipe.id);
+  saveCookbooks();
   saveFavorites();
-  render();
-  recipeDialog.close();
+  if (currentCookbook()) renderCookbook();
+  else aiResults.querySelector(`[data-id="${CSS.escape(found.recipe.id)}"]`)?.remove();
+  detailDialog.close();
   showToast('Recipe deleted');
 }
 
-function linesOf(text) {
-  return text.split('\n').map(l => l.trim()).filter(Boolean);
+async function shareCurrentRecipe() {
+  const found = findRecipe(detailState.recipe.id);
+  const link = await recipeLinkFor(detailState.recipe, found ? found.cookbook.name : '');
+  fillShareBox(detail.querySelector('.share-box'), link, `Try my recipe "${detailState.recipe.title}" 😋`);
+}
+
+// ---------- AI Chef ----------
+
+const AI_SYSTEM_PROMPT = `You are the AI Chef on a recipe-sharing website for friends.
+The user tells you which ingredients they have, by typing them, by sending a photo, or both.
+First identify the ingredients (read the photo carefully if there is one). Then suggest 3 different recipes
+that mainly use those ingredients. You may assume basic pantry items (salt, pepper, oil, water, sugar, flour, spices).
+List anything else the recipe needs in missing_ingredients. Write in simple English for home cooks.
+Each ingredient line includes a quantity. Keep steps short and clear, 3 to 8 steps.
+Use a single food emoji for "emoji" and 1 to 3 short tags such as "Dinner", "Quick" or "Vegetarian".
+If the photo does not show food, ignore it and use the typed ingredients only.`;
+
+const AI_SCHEMA = {
+  type: 'object',
+  properties: {
+    recognized_ingredients: { type: 'array', items: { type: 'string' } },
+    recipes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          emoji: { type: 'string' },
+          time: { type: 'integer' },
+          servings: { type: 'integer' },
+          tags: { type: 'array', items: { type: 'string' } },
+          ingredients: { type: 'array', items: { type: 'string' } },
+          steps: { type: 'array', items: { type: 'string' } },
+          missing_ingredients: { type: 'array', items: { type: 'string' } }
+        },
+        required: ['title', 'emoji', 'time', 'servings', 'tags', 'ingredients', 'steps', 'missing_ingredients'],
+        additionalProperties: false
+      }
+    }
+  },
+  required: ['recognized_ingredients', 'recipes'],
+  additionalProperties: false
+};
+
+function getApiKey() {
+  return localStorage.getItem(API_KEY_KEY) || '';
+}
+
+function renderAiSettingsHint() {
+  if (getApiKey()) {
+    aiStatus.hidden = true;
+  } else {
+    setAiStatus('💡 Without an API key, the AI Chef only searches your cookbooks. Add a key in ⚙️ settings to get new AI recipe ideas.');
+  }
+}
+
+function setAiStatus(message, isError = false) {
+  aiStatus.hidden = false;
+  aiStatus.textContent = message;
+  aiStatus.classList.toggle('error', isError);
+}
+
+// Find recipes in your cookbooks that use the typed ingredients (works without AI).
+function matchingRecipes(ingredientWords) {
+  const results = [];
+  cookbooks.forEach(cookbook => cookbook.recipes.forEach(recipe => {
+    const ingredientsText = recipe.ingredients.join(' ').toLowerCase();
+    const used = ingredientWords.filter(word => ingredientsText.includes(word));
+    if (used.length) results.push({ recipe, cookbook, used });
+  }));
+  return results.sort((a, b) => b.used.length - a.used.length).slice(0, 6);
+}
+
+async function askAiChef(ingredientsText, photo) {
+  const { default: Anthropic } = await import('https://esm.sh/@anthropic-ai/sdk@0.133.0');
+  // The key belongs to the person using the site and stays in their browser.
+  const client = new Anthropic({ apiKey: getApiKey(), dangerouslyAllowBrowser: true });
+
+  const content = [];
+  if (photo) {
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: photo.split(',')[1] } });
+  }
+  content.push({
+    type: 'text',
+    text: ingredientsText
+      ? `These are the ingredients I have: ${ingredientsText}`
+      : 'Here is a photo of the ingredients I have.'
+  });
+
+  try {
+    const response = await client.beta.messages.create({
+      model: 'claude-opus-5-5',
+      max_tokens: 16000,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      // Low effort keeps the answer fast enough for a live demo.
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: AI_SCHEMA } },
+      system: AI_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content }]
+    });
+
+    if (response.stop_reason === 'refusal') {
+      throw new Error('The AI Chef could not help with this request. Try different ingredients.');
+    }
+    if (response.stop_reason === 'max_tokens') {
+      throw new Error('The AI Chef\'s answer was cut off. Please try again.');
+    }
+    // If a fallback model took over, its answer comes after the last "fallback" block.
+    const lastFallback = response.content.map(b => b.type).lastIndexOf('fallback');
+    const answer = response.content.slice(lastFallback + 1)
+      .filter(b => b.type === 'text').map(b => b.text).join('');
+    return JSON.parse(answer);
+  } catch (error) {
+    if (error instanceof Anthropic.AuthenticationError) {
+      throw new Error('Your API key was not accepted. Check it in ⚙️ settings.');
+    } else if (error instanceof Anthropic.RateLimitError) {
+      throw new Error('Too many requests right now. Wait a minute and try again.');
+    } else if (error instanceof Anthropic.APIConnectionError) {
+      throw new Error('Could not reach the AI. Check your internet connection.');
+    } else if (error instanceof Anthropic.APIError) {
+      throw new Error(`The AI service returned an error (${error.status}). Please try again.`);
+    }
+    throw error;
+  }
+}
+
+function renderAiResults(fromCookbooks, aiData) {
+  let html = '';
+  if (aiData) {
+    aiSuggestions = aiData.recipes.slice(0, 3).map((r, i) => ({
+      recipe: normalizeRecipe({ ...r, id: `ai-${Date.now()}-${i}`, author: 'AI Chef 🤖' }),
+      missing: textList(r.missing_ingredients, 60)
+    }));
+    const seen = textList(aiData.recognized_ingredients, 60);
+    html += `<h3>✨ AI recipe ideas</h3>`;
+    if (seen.length) html += `<p class="meta">I found: ${esc(seen.join(', '))}</p>`;
+    html += `<div class="grid">${aiSuggestions.map((s, i) => recipeCard(s.recipe, `data-ai="${i}"`)
+      .replace('</h3>', `</h3>${s.missing.length ? `<p class="meta small">🛒 You'll also need: ${esc(s.missing.join(', '))}</p>` : ''}`)).join('')}</div>`;
+  }
+  if (fromCookbooks.length) {
+    html += `<h3>📒 From your cookbooks</h3>
+      <div class="grid">${fromCookbooks.map(m => recipeCard(m.recipe, `data-id="${esc(m.recipe.id)}"`)
+        .replace('</h3>', `</h3><p class="meta small">Uses: ${esc(m.used.join(', '))} · in ${esc(m.cookbook.name)}</p>`)).join('')}</div>`;
+  }
+  aiResults.innerHTML = html;
+}
+
+async function handleAiSubmit(event) {
+  event.preventDefault();
+  const typed = aiForm.elements.ingredients.value.trim();
+  if (!typed && !aiPhoto) {
+    setAiStatus('Type some ingredients or add a photo first 🙂', true);
+    return;
+  }
+  const words = typed.toLowerCase().split(/[,\n]+/).map(w => w.trim()).filter(Boolean);
+  const fromCookbooks = matchingRecipes(words);
+  aiResults.innerHTML = '';
+
+  if (!getApiKey()) {
+    renderAiResults(fromCookbooks, null);
+    setAiStatus(fromCookbooks.length
+      ? '💡 These recipes from your cookbooks use your ingredients. Add an API key in ⚙️ settings for new AI ideas.'
+      : '😕 No matching recipes in your cookbooks. Add an API key in ⚙️ settings to get AI ideas.');
+    return;
+  }
+
+  const button = aiForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  setAiStatus('👩‍🍳 The AI Chef is thinking...');
+  try {
+    const aiData = await askAiChef(typed, aiPhoto);
+    renderAiResults(fromCookbooks, aiData);
+    aiStatus.hidden = true;
+  } catch (error) {
+    renderAiResults(fromCookbooks, null);
+    setAiStatus(error.message || 'Something went wrong. Please try again.', true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // ---------- Events ----------
 
-document.getElementById('add-btn').addEventListener('click', () => {
+$('home-link').addEventListener('click', goHome);
+document.querySelectorAll('[data-go-home]').forEach(b => b.addEventListener('click', goHome));
+
+function handleHomeOpen(target) {
+  const card = target.closest('[data-cookbook], [data-open]');
+  if (!card) return;
+  if (card.dataset.cookbook) openCookbook(card.dataset.cookbook);
+  else if (card.dataset.open === 'ai') openAiChef();
+  else {
+    $('cookbook-form').reset();
+    $('cookbook-dialog').showModal();
+  }
+}
+cookbookGrid.addEventListener('click', event => handleHomeOpen(event.target));
+cookbookGrid.addEventListener('keydown', event => {
+  if (event.key === 'Enter') handleHomeOpen(event.target);
+});
+
+$('cookbook-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const data = new FormData(event.target);
+  const cookbook = createCookbook(data.get('name'), data.get('emoji'));
+  saveCookbooks();
+  $('cookbook-dialog').close();
+  showToast(`“${cookbook.name}” created! Add a recipe or invite friends.`);
+  openCookbook(cookbook.id);
+});
+
+$('delete-cookbook-btn').addEventListener('click', () => {
+  const cookbook = currentCookbook();
+  if (!confirm(`Delete the whole cookbook "${cookbook.name}" and its ${cookbook.recipes.length} recipes?`)) return;
+  cookbooks = cookbooks.filter(c => c.id !== cookbook.id);
+  saveCookbooks();
+  showToast('Cookbook deleted');
+  goHome();
+});
+
+$('invite-btn').addEventListener('click', () => {
+  const cookbook = currentCookbook();
+  const link = cookbookLinkFor(cookbook);
+  if (link.length > MAX_LINK_LENGTH) {
+    showToast('This cookbook is too big for one link. Share recipes one by one instead.');
+    return;
+  }
+  fillShareBox(inviteBox, link, `Join my cookbook "${cookbook.name}" 🍳`);
+});
+
+$('add-btn').addEventListener('click', () => {
   recipeForm.reset();
+  recipeForm.elements.author.value = profileName;
   pendingPhoto = '';
   photoPreview.hidden = true;
   formDialog.showModal();
 });
 
-photoInput.addEventListener('change', async () => {
-  const file = photoInput.files[0];
+recipeForm.elements.photo.addEventListener('change', async () => {
+  const file = recipeForm.elements.photo.files[0];
   pendingPhoto = '';
   photoPreview.hidden = true;
   if (!file) return;
-  const url = URL.createObjectURL(file);
   try {
-    pendingPhoto = await resizeImage(url, 800, 0.75);
+    pendingPhoto = await readPhotoFile(file, 800, 0.75);
     photoPreview.src = pendingPhoto;
     photoPreview.hidden = false;
   } catch (e) {
-    photoInput.value = '';
+    recipeForm.elements.photo.value = '';
     showToast('Sorry, that file is not a photo we can use');
-  } finally {
-    URL.revokeObjectURL(url);
   }
 });
 
@@ -369,13 +818,14 @@ recipeForm.addEventListener('submit', event => {
     steps: linesOf(data.get('steps')),
     photo: pendingPhoto
   });
-  recipes.unshift(recipe);
-  if (!saveRecipes()) {
-    recipes.shift();
-    showToast('Your cookbook is full. Delete some recipes with photos first.');
+  const cookbook = currentCookbook();
+  cookbook.recipes.unshift(recipe);
+  if (!saveCookbooks()) {
+    cookbook.recipes.shift();
+    showToast('Your storage is full. Delete some recipes with photos first.');
     return;
   }
-  render();
+  renderCookbook();
   formDialog.close();
   showToast('Recipe added! 🎉');
   openRecipe(recipe);
@@ -383,43 +833,109 @@ recipeForm.addEventListener('submit', event => {
 
 searchInput.addEventListener('input', () => {
   searchText = searchInput.value.trim().toLowerCase();
-  renderGrid();
+  renderRecipeGrid();
 });
 
 tagFilters.addEventListener('click', event => {
   const chip = event.target.closest('[data-tag]');
   if (!chip) return;
   activeTag = chip.dataset.tag;
-  render();
+  renderCookbook();
 });
 
-grid.addEventListener('click', event => {
+// Recipe cards appear in a cookbook and in the AI Chef results.
+function handleRecipeCardClick(event) {
   const favButton = event.target.closest('[data-fav]');
   if (favButton) {
     toggleFavorite(favButton.dataset.fav);
     return;
   }
   const card = event.target.closest('.card');
-  if (card) openRecipe(recipes.find(r => r.id === card.dataset.id));
+  if (!card) return;
+  if (card.dataset.ai !== undefined) {
+    openRecipe(aiSuggestions[card.dataset.ai].recipe, 'ai');
+  } else {
+    const found = findRecipe(card.dataset.id);
+    if (found) openRecipe(found.recipe);
+  }
+}
+[recipeGrid, aiResults].forEach(container => {
+  container.addEventListener('click', handleRecipeCardClick);
+  container.addEventListener('keydown', event => {
+    if (event.key === 'Enter') handleRecipeCardClick(event);
+  });
 });
 
-grid.addEventListener('keydown', event => {
-  const card = event.target.closest('.card');
-  if (card && event.key === 'Enter') openRecipe(recipes.find(r => r.id === card.dataset.id));
-});
-
-recipeDetail.addEventListener('click', event => {
+detail.addEventListener('click', event => {
+  const copyButton = event.target.closest('[data-copy]');
+  if (copyButton) return copyLink(detail.querySelector('.share-link').value);
   const button = event.target.closest('[data-action]');
   if (!button) return;
   const action = button.dataset.action;
-  if (action === 'share') showShareBox();
-  if (action === 'copy') copyLink(recipeDetail.querySelector('.share-link').value);
-  if (action === 'save') saveSharedRecipe();
+  if (action === 'share') shareCurrentRecipe();
+  if (action === 'save') saveRecipeFromDetail();
+  if (action === 'join') joinSharedCookbook();
   if (action === 'delete') deleteCurrentRecipe();
   if (action === 'fav') {
-    toggleFavorite(currentRecipe.id);
-    openRecipe(currentRecipe);
+    toggleFavorite(detailState.recipe.id);
+    openRecipe(detailState.recipe);
   }
+});
+
+inviteBox.querySelector('[data-copy]').addEventListener('click', () => {
+  copyLink(inviteBox.querySelector('.share-link').value);
+});
+
+// AI Chef form
+aiForm.addEventListener('submit', handleAiSubmit);
+aiForm.elements.photo.addEventListener('change', async () => {
+  const file = aiForm.elements.photo.files[0];
+  aiPhoto = '';
+  aiPhotoPreview.hidden = true;
+  if (!file) return;
+  try {
+    aiPhoto = await readPhotoFile(file, 1024, 0.8);
+    aiPhotoPreview.src = aiPhoto;
+    aiPhotoPreview.hidden = false;
+  } catch (e) {
+    aiForm.elements.photo.value = '';
+    showToast('Sorry, that file is not a photo we can use');
+  }
+});
+
+// Your name
+$('profile-btn').addEventListener('click', () => {
+  $('profile-form').elements.name.value = profileName;
+  $('profile-dialog').showModal();
+});
+$('profile-form').addEventListener('submit', event => {
+  event.preventDefault();
+  profileName = text(event.target.elements.name.value, 40);
+  localStorage.setItem(PROFILE_KEY, profileName);
+  renderProfile();
+  $('profile-dialog').close();
+  showToast(`Nice to meet you, ${profileName}! 👋`);
+});
+
+// AI settings
+$('settings-btn').addEventListener('click', () => {
+  $('settings-form').elements.apiKey.value = getApiKey();
+  $('settings-dialog').showModal();
+});
+$('settings-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const key = event.target.elements.apiKey.value.trim();
+  if (key) localStorage.setItem(API_KEY_KEY, key);
+  else localStorage.removeItem(API_KEY_KEY);
+  $('settings-dialog').close();
+  renderAiSettingsHint();
+  showToast(key ? 'API key saved in this browser 🔑' : 'API key removed');
+});
+$('remove-key-btn').addEventListener('click', () => {
+  localStorage.removeItem(API_KEY_KEY);
+  $('settings-dialog').close();
+  renderAiSettingsHint();
+  showToast('API key removed');
 });
 
 // Close buttons and clicking the dark background close dialogs.
@@ -434,12 +950,17 @@ document.querySelectorAll('dialog').forEach(dialog => {
   });
 });
 
-// Remove the share link from the address bar once the shared recipe is closed.
-recipeDialog.addEventListener('close', () => {
-  if (currentIsShared) history.replaceState(null, '', location.pathname + location.search);
+// Remove a share link from the address bar once it has been handled.
+detailDialog.addEventListener('close', () => {
+  if (location.hash) clearHash();
 });
 
-window.addEventListener('hashchange', checkForSharedRecipe);
+window.addEventListener('hashchange', checkForSharedLink);
 
-render();
-checkForSharedRecipe();
+renderProfile();
+goHome();
+if (location.hash) {
+  checkForSharedLink();
+} else if (!profileName) {
+  $('profile-dialog').showModal();
+}
