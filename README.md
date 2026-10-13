@@ -6,6 +6,7 @@ A website for sharing recipes with different groups of friends. It runs entirely
 
 ## Features
 
+- **Three tabs:** 📚 My Cookbooks (welcome page, a + button for new cookbooks and an Invite friends button), 🍽️ My Recipes (every recipe from all cookbooks, filtered by "Added by me" or favorites) and 🤖 AI Chef. On phones the tabs sit at the bottom like an app.
 - **Several cookbooks**, one for each group of friends (for example "Family" and "Uni Friends"). Each cookbook shows its recipes and who added them.
 - **Your name:** the site asks for your name once and puts it on the recipes you add. There are no passwords, because accounts would need a server.
 - **Invite friends:** one link contains a whole cookbook. A friend opens it and gets the cookbook on their own device. If they already have a cookbook with that name, only the new recipes are added.

@@ -3,7 +3,7 @@ const STARTER_COOKBOOKS = [
   {
     id: 'starter-family',
     name: 'Family',
-    emoji: '👨‍👩‍👧',
+    emoji: '🏡',
     recipes: [
       {
         id: 'starter-shakshuka',

@@ -4,61 +4,112 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Friends' Cookbook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="site-header">
-    <div>
-      <h1><button id="home-link" class="home-link">🍳 Friends' Cookbook</button></h1>
-      <p class="tagline">Cookbooks for every group of friends. Share them with a link.</p>
-    </div>
+    <button id="home-link" class="logo">
+      <span class="logo-icon">🍳</span>
+      <span class="logo-text">Friends' Cookbook</span>
+    </button>
     <div class="header-actions">
-      <button id="profile-btn" class="btn btn-light">👋 Hi!</button>
-      <button id="settings-btn" class="btn btn-light" aria-label="AI settings">⚙️</button>
+      <button id="profile-btn" class="profile-chip">
+        <span id="profile-avatar" class="avatar">?</span>
+        <span id="profile-name">Set your name</span>
+      </button>
+      <button id="settings-btn" class="icon-btn" aria-label="AI settings" title="AI settings">⚙️</button>
     </div>
   </header>
 
-  <!-- Home: list of cookbooks -->
+  <nav class="tabs" aria-label="Main">
+    <button class="tab active" data-tab="home"><span class="tab-icon">📚</span> My Cookbooks</button>
+    <button class="tab" data-tab="recipes"><span class="tab-icon">🍽️</span> My Recipes</button>
+    <button class="tab" data-tab="ai"><span class="tab-icon">🤖</span> AI Chef</button>
+  </nav>
+
+  <!-- Home: welcome + list of cookbooks -->
   <section id="home-view" class="view">
-    <h2>Your cookbooks</h2>
+    <div class="hero">
+      <div class="hero-text">
+        <p id="greeting" class="hero-greeting">Hello 👋</p>
+        <h2>What are we cooking today?</h2>
+        <p id="hero-stats" class="hero-stats"></p>
+        <div class="hero-actions">
+          <button id="hero-invite-btn" class="btn btn-primary">👥 Invite friends</button>
+          <button id="hero-ai-btn" class="btn btn-white">🤖 Ask the AI Chef</button>
+        </div>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <span style="--x:8%;--y:12%;--d:0s">🥑</span>
+        <span style="--x:58%;--y:4%;--d:-1s">🍋</span>
+        <span style="--x:30%;--y:38%;--d:-2s">🍅</span>
+        <span style="--x:78%;--y:34%;--d:-3s">🥐</span>
+        <span style="--x:10%;--y:66%;--d:-1.5s">🌶️</span>
+        <span style="--x:50%;--y:70%;--d:-2.5s">🧁</span>
+        <span style="--x:84%;--y:72%;--d:-0.5s">🍕</span>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <div>
+        <h2>📚 My Cookbooks</h2>
+        <p class="meta">One cookbook for every group of friends.</p>
+      </div>
+      <button id="new-cookbook-btn" class="fab" aria-label="New cookbook" title="New cookbook">+</button>
+    </div>
     <div id="cookbook-grid" class="grid"></div>
+  </section>
+
+  <!-- All recipes from every cookbook -->
+  <section id="recipes-view" class="view" hidden>
+    <div class="section-head">
+      <div>
+        <h2>🍽️ My Recipes</h2>
+        <p class="meta">Every recipe from all your cookbooks in one place.</p>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input id="recipes-search" class="search" type="search" placeholder="🔍 Search all recipes..." aria-label="Search all recipes">
+      <div id="recipes-filters" class="chips"></div>
+    </div>
+    <div id="all-recipes-grid" class="grid"></div>
+    <p id="recipes-empty" class="empty" hidden>🥄 Nothing here yet.</p>
   </section>
 
   <!-- One cookbook -->
   <section id="cookbook-view" class="view" hidden>
-    <button class="back-btn" data-go-home>← All cookbooks</button>
-    <div class="view-header">
+    <button class="back-btn" data-go-home>← My Cookbooks</button>
+    <div class="cookbook-banner" id="cookbook-banner">
       <div>
         <h2 id="cookbook-title"></h2>
-        <p id="cookbook-members" class="meta"></p>
+        <div id="cookbook-members" class="avatars"></div>
       </div>
       <div class="view-actions">
         <button id="add-btn" class="btn btn-primary">+ Add a recipe</button>
-        <button id="invite-btn" class="btn">👥 Invite friends</button>
-        <button id="delete-cookbook-btn" class="btn btn-danger">🗑</button>
-      </div>
-    </div>
-    <div id="invite-box" class="share-box" hidden>
-      <p>Send this link to your friends. They'll get a copy of this cookbook with all its recipes (without photos).</p>
-      <div class="share-row">
-        <input class="share-link" readonly>
-        <button class="btn" data-copy>📋 Copy</button>
-        <a class="btn btn-whatsapp" target="_blank" rel="noopener">WhatsApp</a>
+        <button id="invite-btn" class="btn btn-white">👥 Invite friends</button>
+        <button id="delete-cookbook-btn" class="icon-btn" aria-label="Delete cookbook" title="Delete cookbook">🗑</button>
       </div>
     </div>
     <div class="toolbar">
-      <input id="search" type="search" placeholder="Search recipes, ingredients or friends..." aria-label="Search recipes">
+      <input id="search" class="search" type="search" placeholder="🔍 Search recipes, ingredients or friends..." aria-label="Search recipes">
       <div id="tag-filters" class="chips"></div>
     </div>
     <div id="recipe-grid" class="grid"></div>
-    <p id="empty-state" class="empty" hidden>No recipes here yet. Add one, or try another search! 🥄</p>
+    <p id="empty-state" class="empty" hidden>🥄 No recipes here yet. Add one, or try another search!</p>
   </section>
 
   <!-- AI Chef -->
   <section id="ai-view" class="view" hidden>
-    <button class="back-btn" data-go-home>← All cookbooks</button>
-    <h2>🤖 AI Chef</h2>
-    <p class="meta">Tell the AI Chef what's in your kitchen. Type your ingredients, upload a photo of them, or both.</p>
+    <div class="ai-hero">
+      <span class="ai-hero-icon" aria-hidden="true">🧑‍🍳</span>
+      <div>
+        <h2>AI Chef</h2>
+        <p>Tell me what's in your kitchen: type your ingredients, upload a photo, or both. I'll suggest recipes you can make.</p>
+      </div>
+    </div>
     <form id="ai-form" class="ai-form">
       <label>Ingredients you have
         <textarea name="ingredients" rows="3" placeholder="eggs, tomatoes, cheese, spinach"></textarea>
@@ -139,7 +190,7 @@
         </label>
         <label class="small">Icon
           <select name="emoji">
-            <option>📒</option><option>👨‍👩‍👧</option><option>🎓</option><option>🏠</option>
+            <option>📒</option><option>🏡</option><option>🎓</option><option>🏠</option>
             <option>🎉</option><option>💪</option><option>🌱</option><option>❤️</option>
           </select>
         </label>
