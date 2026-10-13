@@ -5,6 +5,10 @@
 const STORAGE_KEY = 'friendsCookbook.recipes';
 const FAVORITES_KEY = 'friendsCookbook.favorites';
 const CARD_COLORS = ['#ffe5d9', '#fff1c1', '#dff3e3', '#e0ecff', '#f3e1ff', '#ffdfe8'];
+const PHOTO_PATTERN = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
+const MAX_PHOTO_LENGTH = 400000;
+// Links longer than this may not fit in a chat message, so the photo is left out.
+const MAX_LINK_LENGTH = 30000;
 
 let recipes = loadRecipes();
 let favorites = new Set(JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]'));
@@ -12,6 +16,7 @@ let activeTag = 'All';
 let searchText = '';
 let currentRecipe = null;
 let currentIsShared = false;
+let pendingPhoto = '';
 
 const grid = document.getElementById('recipe-grid');
 const emptyState = document.getElementById('empty-state');
@@ -21,6 +26,8 @@ const recipeDialog = document.getElementById('recipe-dialog');
 const recipeDetail = document.getElementById('recipe-detail');
 const formDialog = document.getElementById('form-dialog');
 const recipeForm = document.getElementById('recipe-form');
+const photoInput = recipeForm.elements.photo;
+const photoPreview = document.getElementById('photo-preview');
 const toast = document.getElementById('toast');
 
 // ---------- Storage ----------
@@ -35,8 +42,14 @@ function loadRecipes() {
   return STARTER_RECIPES.map(normalizeRecipe);
 }
 
+// Returns false when the browser storage is full (usually because of too many photos).
 function saveRecipes() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(recipes));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(recipes));
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function saveFavorites() {
@@ -55,6 +68,8 @@ function normalizeRecipe(raw) {
   const text = (value, max) => String(value ?? '').trim().slice(0, max);
   const list = (value, max) =>
     (Array.isArray(value) ? value : []).map(item => text(item, max)).filter(Boolean).slice(0, 50);
+  const photo = typeof raw.photo === 'string' && raw.photo.length <= MAX_PHOTO_LENGTH &&
+    PHOTO_PATTERN.test(raw.photo) ? raw.photo : '';
 
   return {
     id: text(raw.id, 50) || newId(),
@@ -65,8 +80,32 @@ function normalizeRecipe(raw) {
     servings: Math.max(1, parseInt(raw.servings, 10) || 1),
     tags: list(raw.tags, 20).slice(0, 5),
     ingredients: list(raw.ingredients, 200),
-    steps: list(raw.steps, 500)
+    steps: list(raw.steps, 500),
+    photo
   };
+}
+
+// Shrink a photo so it fits in browser storage (and in share links).
+function resizeImage(src, maxSize, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => reject(new Error('This file is not an image'));
+    img.src = src;
+  });
+}
+
+function recipeImage(recipe, className) {
+  return recipe.photo
+    ? `<img class="${className}" src="${esc(recipe.photo)}" alt="${esc(recipe.title)}">`
+    : `<div class="${className} emoji-image" style="background:${colorFor(recipe.id)}">${esc(recipe.emoji)}</div>`;
 }
 
 // Escape text before putting it into HTML (protects against malicious shared links).
@@ -109,8 +148,19 @@ function decodeRecipe(code) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
-function shareLinkFor(recipe) {
-  return location.href.split('#')[0] + '#recipe=' + encodeRecipe(recipe);
+// Share links include a small version of the photo, as long as the link stays short enough.
+async function shareLinkFor(recipe) {
+  const base = location.href.split('#')[0] + '#recipe=';
+  if (recipe.photo) {
+    try {
+      const smallPhoto = await resizeImage(recipe.photo, 320, 0.5);
+      const link = base + encodeRecipe({ ...recipe, photo: smallPhoto });
+      if (link.length <= MAX_LINK_LENGTH) return link;
+    } catch (e) {
+      // Fall through and share without the photo.
+    }
+  }
+  return base + encodeRecipe({ ...recipe, photo: '' });
 }
 
 function checkForSharedRecipe() {
@@ -154,7 +204,7 @@ function renderGrid() {
   grid.innerHTML = visible
     .map(r => `
       <article class="card" data-id="${esc(r.id)}" tabindex="0">
-        <div class="card-emoji" style="background:${colorFor(r.id)}">${esc(r.emoji)}</div>
+        ${recipeImage(r, 'card-image')}
         <button class="fav-btn ${favorites.has(r.id) ? 'on' : ''}" data-fav="${esc(r.id)}"
           aria-label="Toggle favorite">${favorites.has(r.id) ? '★' : '☆'}</button>
         <div class="card-body">
@@ -184,7 +234,7 @@ function openRecipe(recipe, isShared = false) {
 
   recipeDetail.innerHTML = `
     ${isShared ? '<div class="shared-note">🎁 A friend shared this recipe with you!</div>' : ''}
-    <div class="detail-hero" style="background:${colorFor(recipe.id)}">${esc(recipe.emoji)}</div>
+    ${recipeImage(recipe, 'detail-image')}
     <h2>${esc(recipe.title)}</h2>
     <p class="meta">by ${esc(recipe.author)} · ⏱ ${recipe.time} min · 🍽 ${recipe.servings} servings</p>
     <div class="tags">${recipe.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
@@ -222,8 +272,8 @@ function toggleFavorite(id) {
   renderGrid();
 }
 
-function showShareBox() {
-  const link = shareLinkFor(currentRecipe);
+async function showShareBox() {
+  const link = await shareLinkFor(currentRecipe);
   const box = recipeDetail.querySelector('.share-box');
   box.hidden = false;
   box.querySelector('.share-link').value = link;
@@ -250,9 +300,13 @@ function saveSharedRecipe() {
   } else {
     const saved = { ...currentRecipe, id: newId() };
     recipes.unshift(saved);
-    saveRecipes();
-    render();
-    showToast(`"${saved.title}" was added to your cookbook! 🎉`);
+    if (saveRecipes()) {
+      render();
+      showToast(`"${saved.title}" was added to your cookbook! 🎉`);
+    } else {
+      recipes.shift();
+      showToast('Your cookbook is full. Delete some recipes with photos first.');
+    }
   }
   recipeDialog.close();
 }
@@ -276,7 +330,27 @@ function linesOf(text) {
 
 document.getElementById('add-btn').addEventListener('click', () => {
   recipeForm.reset();
+  pendingPhoto = '';
+  photoPreview.hidden = true;
   formDialog.showModal();
+});
+
+photoInput.addEventListener('change', async () => {
+  const file = photoInput.files[0];
+  pendingPhoto = '';
+  photoPreview.hidden = true;
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  try {
+    pendingPhoto = await resizeImage(url, 800, 0.75);
+    photoPreview.src = pendingPhoto;
+    photoPreview.hidden = false;
+  } catch (e) {
+    photoInput.value = '';
+    showToast('Sorry, that file is not a photo we can use');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 });
 
 recipeForm.addEventListener('submit', event => {
@@ -292,10 +366,15 @@ recipeForm.addEventListener('submit', event => {
     tags: data.get('tags').split(',').map(t => t.trim()).filter(Boolean)
       .map(t => t[0].toUpperCase() + t.slice(1)),
     ingredients: linesOf(data.get('ingredients')),
-    steps: linesOf(data.get('steps'))
+    steps: linesOf(data.get('steps')),
+    photo: pendingPhoto
   });
   recipes.unshift(recipe);
-  saveRecipes();
+  if (!saveRecipes()) {
+    recipes.shift();
+    showToast('Your cookbook is full. Delete some recipes with photos first.');
+    return;
+  }
   render();
   formDialog.close();
   showToast('Recipe added! 🎉');

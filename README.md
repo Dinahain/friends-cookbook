@@ -6,6 +6,7 @@ A website for sharing recipes with friends. It runs entirely in the browser, wit
 
 - Browse recipes as cards, search by name, ingredient or friend, and filter by tag
 - Add your own recipes (saved in the browser with `localStorage`)
+- Add a photo to a recipe. Photos are shrunk automatically so they fit in browser storage, and on a phone you can take one with the camera
 - Mark favorites ★
 - **Share a recipe with a link:** the whole recipe is encoded inside the link, so your friend can open it and save it to their own cookbook with no server needed
 - Check off ingredients while cooking
